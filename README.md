@@ -1,7 +1,7 @@
 # EtherDrops BOT
 EtherDrops BOT
 
-Register Here : [EtherDrops](https://t.me/drops/app?startapp=ref_LAAIT)
+Register Here : [EtherDrops](https://t.me/drops/app?startapp=ref_XKFWG)
 
 ## Fitur
 

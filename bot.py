@@ -25,6 +25,7 @@ class EtherDrops:
             'Sec-Fetch-Site': 'same-site',
             'User-Agent': FakeUserAgent().random
         }
+        self.code = 'XKFWG'
 
     def clear_terminal(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -109,7 +110,7 @@ class EtherDrops:
                 
     async def apply_reff(self, token: str, query: str, retries=5):
         url = 'https://api.miniapp.dropstab.com/api/user/applyRefLink'
-        data = json.dumps({'code':'LAAIT'})
+        data = json.dumps({'code':self.code})
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
