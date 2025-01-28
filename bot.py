@@ -15,17 +15,16 @@ class EtherDrops:
         self.headers = {
             'Accept': 'application/json',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Host': 'api.miniapp.dropstab.com',
-            'Origin': 'https://miniapp.dropstab.com',
+            'App-Version': '1.0.0',
+            'Origin': 'https://mdkefjwsfepf.dropstab.com',
             'Pragma': 'no-cache',
-            'Referer': 'https://miniapp.dropstab.com/',
+            'Referer': 'https://mdkefjwsfepf.dropstab.com/',
             'Sec-Fetch-Dest': 'empty',
             'Sec-Fetch-Mode': 'cors',
             'Sec-Fetch-Site': 'same-site',
             'User-Agent': FakeUserAgent().random
         }
-        self.code = 'XKFWG'
+        self.API = "https://api.miniapp.dropstab.com/api"
 
     def clear_terminal(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -53,7 +52,7 @@ class EtherDrops:
         return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
     
     async def auth_login(self, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/auth/login'
+        url = f'{self.API}/auth/login'
         data = json.dumps({'webAppData':query})
         headers = {
             **self.headers,
@@ -82,7 +81,7 @@ class EtherDrops:
                     return None
                 
     async def user_data(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/user/current'
+        url = f'{self.API}/user/current'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -109,8 +108,8 @@ class EtherDrops:
                     return None
                 
     async def apply_reff(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/user/applyRefLink'
-        data = json.dumps({'code':self.code})
+        url = f'{self.API}/user/applyRefLink'
+        data = json.dumps({'code':'LAAIT'})
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -137,7 +136,7 @@ class EtherDrops:
                 else:
                     return None
     async def welcome_bonus(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/bonus/welcomeBonus'
+        url = f'{self.API}/bonus/welcomeBonus'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -165,7 +164,7 @@ class EtherDrops:
                     return None
                 
     async def daily_bonus(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/bonus/dailyBonus'
+        url = f'{self.API}/bonus/dailyBonus'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -193,7 +192,7 @@ class EtherDrops:
                     return None
                 
     async def reff_link(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/refLink'
+        url = f'{self.API}/refLink'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -220,7 +219,7 @@ class EtherDrops:
                     return None
                 
     async def claim_reff(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/refLink/claim'
+        url = f'{self.API}/refLink/claim'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -248,7 +247,7 @@ class EtherDrops:
                     return None
                 
     async def my_order(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/order'
+        url = f'{self.API}/order'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -275,7 +274,7 @@ class EtherDrops:
                     return None
 
     async def btc_stats(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/order/coinStats/1'
+        url = f'{self.API}/order/coinStats/1'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -302,7 +301,7 @@ class EtherDrops:
                     return None
                 
     async def create_order(self, token: str, query: str, period_id: int, trade: bool, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/order'
+        url = f'{self.API}/order'
         data = json.dumps({'coinId':1, 'periodId':period_id, 'short':trade})
         headers = {
             **self.headers,
@@ -334,7 +333,7 @@ class EtherDrops:
                     return None
                 
     async def claim_order(self, token: str, query: str, order_id: int, type: str, retries=5):
-        url = f'https://api.miniapp.dropstab.com/api/order/{order_id}/{type}'
+        url = f'{self.API}/order/{order_id}/{type}'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -362,7 +361,7 @@ class EtherDrops:
                     return None
                 
     async def quest_lists(self, token: str, query: str, retries=5):
-        url = 'https://api.miniapp.dropstab.com/api/quest'
+        url = f'{self.API}/quest'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -389,7 +388,7 @@ class EtherDrops:
                     return None
                 
     async def verify_quests(self, token: str, query: str, sub_quest_id: int, retries=5):
-        url = f'https://api.miniapp.dropstab.com/api/quest/{sub_quest_id}/verify'
+        url = f'{self.API}/quest/{sub_quest_id}/verify'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
@@ -417,7 +416,7 @@ class EtherDrops:
                     return None
                 
     async def claim_quests(self, token: str, query: str, sub_quest_id: int, retries=5):
-        url = f'https://api.miniapp.dropstab.com/api/quest/{sub_quest_id}/claim'
+        url = f'{self.API}/quest/{sub_quest_id}/claim'
         headers = {
             **self.headers,
             'Authorization': f'Bearer {token}',
