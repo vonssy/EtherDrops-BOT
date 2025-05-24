@@ -3,28 +3,35 @@ from aiohttp import (
     ClientSession,
     ClientTimeout
 )
-from colorama import *
-from datetime import datetime
+from aiohttp_socks import ProxyConnector
 from fake_useragent import FakeUserAgent
-import asyncio, json, os, pytz
+from urllib.parse import unquote, parse_qs
+from datetime import datetime
+from colorama import *
+import asyncio, json, time, os, pytz
 
 wib = pytz.timezone('Asia/Jakarta')
 
 class EtherDrops:
     def __init__(self) -> None:
         self.headers = {
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'App-Version': '1.0.0',
-            'Origin': 'https://mdkefjwsfepf.dropstab.com',
-            'Pragma': 'no-cache',
-            'Referer': 'https://mdkefjwsfepf.dropstab.com/',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-site',
-            'User-Agent': FakeUserAgent().random
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "App-Version": "1.0.0",
+            "Origin": "https://miniapp.dropstab.com",
+            "Referer": "https://miniapp.dropstab.com/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "User-Agent": FakeUserAgent().random
         }
-        self.API = "https://api.miniapp.dropstab.com/api"
+        self.BASE_API = "https://api.miniapp.dropstab.com/api"
+        self.ref_code = "XKFWG" # U can change it with yours.
+        self.proxies = []
+        self.proxy_index = 0
+        self.account_proxies = {}
+        self.query_ids = {}
+        self.access_tokens = {}
 
     def clear_terminal(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -51,838 +58,915 @@ class EtherDrops:
         minutes, seconds = divmod(remainder, 60)
         return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
     
-    async def auth_login(self, query: str, retries=5):
-        url = f'{self.API}/auth/login'
-        data = json.dumps({'webAppData':query})
+    async def load_proxies(self, use_proxy_choice: int):
+        filename = "proxy.txt"
+        try:
+            if use_proxy_choice == 1:
+                async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+                    async with session.get("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/all.txt") as response:
+                        response.raise_for_status()
+                        content = await response.text()
+                        with open(filename, 'w') as f:
+                            f.write(content)
+                        self.proxies = content.splitlines()
+            else:
+                if not os.path.exists(filename):
+                    self.log(f"{Fore.RED + Style.BRIGHT}File {filename} Not Found.{Style.RESET_ALL}")
+                    return
+                with open(filename, 'r') as f:
+                    self.proxies = f.read().splitlines()
+            
+            if not self.proxies:
+                self.log(f"{Fore.RED + Style.BRIGHT}No Proxies Found.{Style.RESET_ALL}")
+                return
+
+            self.log(
+                f"{Fore.GREEN + Style.BRIGHT}Proxies Total  : {Style.RESET_ALL}"
+                f"{Fore.WHITE + Style.BRIGHT}{len(self.proxies)}{Style.RESET_ALL}"
+            )
+        
+        except Exception as e:
+            self.log(f"{Fore.RED + Style.BRIGHT}Failed To Load Proxies: {e}{Style.RESET_ALL}")
+            self.proxies = []
+
+    def check_proxy_schemes(self, proxies):
+        schemes = ["http://", "https://", "socks4://", "socks5://"]
+        if any(proxies.startswith(scheme) for scheme in schemes):
+            return proxies
+        return f"http://{proxies}"
+
+    def get_next_proxy_for_account(self, token):
+        if token not in self.account_proxies:
+            if not self.proxies:
+                return None
+            proxy = self.check_proxy_schemes(self.proxies[self.proxy_index])
+            self.account_proxies[token] = proxy
+            self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
+        return self.account_proxies[token]
+
+    def rotate_proxy_for_account(self, token):
+        if not self.proxies:
+            return None
+        proxy = self.check_proxy_schemes(self.proxies[self.proxy_index])
+        self.account_proxies[token] = proxy
+        self.proxy_index = (self.proxy_index + 1) % len(self.proxies)
+        return proxy
+    
+    def load_query_data(self, query_id: str):
+        try:
+            query_data = parse_qs(query_id).get("user", [None])[0]
+            user_data = json.loads(unquote(query_data))
+            user_id = user_data.get("id", None)
+            username = user_data.get("username", "unknown")
+
+            return user_id, username
+        except Exception as e:
+            raise Exception("Invalid Query Id Format")
+        
+    def print_question(self):
+        while True:
+            try:
+                print(f"{Fore.WHITE + Style.BRIGHT}1. Run With Monosans Proxy{Style.RESET_ALL}")
+                print(f"{Fore.WHITE + Style.BRIGHT}2. Run With Private Proxy{Style.RESET_ALL}")
+                print(f"{Fore.WHITE + Style.BRIGHT}3. Run Without Proxy{Style.RESET_ALL}")
+                choose = int(input(f"{Fore.BLUE + Style.BRIGHT}Choose [1/2/3] -> {Style.RESET_ALL}").strip())
+
+                if choose in [1, 2, 3]:
+                    proxy_type = (
+                        "Run With Monosans Proxy" if choose == 1 else 
+                        "Run With Private Proxy" if choose == 2 else 
+                        "Run Without Proxy"
+                    )
+                    print(f"{Fore.GREEN + Style.BRIGHT}{proxy_type} Selected.{Style.RESET_ALL}")
+                    break
+                else:
+                    print(f"{Fore.RED + Style.BRIGHT}Please enter either 1, 2 or 3.{Style.RESET_ALL}")
+            except ValueError:
+                print(f"{Fore.RED + Style.BRIGHT}Invalid input. Enter a number (1, 2 or 3).{Style.RESET_ALL}")
+
+        rotate = False
+        if choose in [1, 2]:
+            while True:
+                rotate = input(f"{Fore.BLUE + Style.BRIGHT}Rotate Invalid Proxy? [y/n] -> {Style.RESET_ALL}").strip()
+
+                if rotate in ["y", "n"]:
+                    rotate = rotate == "y"
+                    break
+                else:
+                    print(f"{Fore.RED + Style.BRIGHT}Invalid input. Enter 'y' or 'n'.{Style.RESET_ALL}")
+
+        return choose, rotate
+            
+    async def auth_login(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/auth/login"
+        data = json.dumps({"webAppData":self.query_ids[user_id]})
         headers = {
             **self.headers,
-            'Content-Length': str(len(data)),
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
+            "Content-Length": str(len(data)),
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
         }
+        await asyncio.sleep(3)
         for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
                     async with session.post(url=url, headers=headers, data=data) as response:
+                        if response.status == 403:
+                            self.log(
+                                f"{Fore.CYAN+Style.BRIGHT}Status  :{Style.RESET_ALL}"
+                                f"{Fore.RED+Style.BRIGHT} Retrieving Token Failed {Style.RESET_ALL}"
+                                f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                f"{Fore.YELLOW+Style.BRIGHT} Query Id Expired {Style.RESET_ALL}"
+                            )
+                            return None
                         response.raise_for_status()
                         result = await response.json()
-                        return result['jwt']['access']['token']
+                        return result["jwt"]
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def user_data(self, token: str, query: str, retries=5):
-        url = f'{self.API}/user/current'
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def user_current(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/user/current"
         headers = {
             **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
         }
+        await asyncio.sleep(3)
         for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
                     async with session.get(url=url, headers=headers) as response:
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def apply_reff(self, token: str, query: str, retries=5):
-        url = f'{self.API}/user/applyRefLink'
-        data = json.dumps({'code':'LAAIT'})
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def apply_reflink(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/user/applyRefLink"
+        data = json.dumps({"code":self.ref_code})
         headers = {
             **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': str(len(data)),
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": str(len(data)),
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
         }
+        await asyncio.sleep(3)
         for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
                     async with session.put(url=url, headers=headers, data=data) as response:
-                        response.raise_for_status()
-                        return await response.json()
-            except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-    async def welcome_bonus(self, token: str, query: str, retries=5):
-        url = f'{self.API}/bonus/welcomeBonus'
-        headers = {
-            **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': '0',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
-        }
-        for attempt in range(retries):
-            try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.post(url=url, headers=headers) as response:
-                        response.raise_for_status()
-                        return await response.json()
-            except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def daily_bonus(self, token: str, query: str, retries=5):
-        url = f'{self.API}/bonus/dailyBonus'
-        headers = {
-            **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': '0',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
-        }
-        for attempt in range(retries):
-            try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.post(url=url, headers=headers) as response:
-                        response.raise_for_status()
-                        return await response.json()
-            except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def reff_link(self, token: str, query: str, retries=5):
-        url = f'{self.API}/refLink'
-        headers = {
-            **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
-        }
-        for attempt in range(retries):
-            try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.get(url=url, headers=headers) as response:
-                        response.raise_for_status()
-                        return await response.json()
-            except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def claim_reff(self, token: str, query: str, retries=5):
-        url = f'{self.API}/refLink/claim'
-        headers = {
-            **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': '0',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
-        }
-        for attempt in range(retries):
-            try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.post(url=url, headers=headers) as response:
-                        response.raise_for_status()
-                        return await response.json()
-            except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def my_order(self, token: str, query: str, retries=5):
-        url = f'{self.API}/order'
-        headers = {
-            **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
-        }
-        for attempt in range(retries):
-            try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.get(url=url, headers=headers) as response:
-                        response.raise_for_status()
-                        return await response.json()
-            except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-
-    async def btc_stats(self, token: str, query: str, retries=5):
-        url = f'{self.API}/order/coinStats/1'
-        headers = {
-            **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
-        }
-        for attempt in range(retries):
-            try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.get(url=url, headers=headers) as response:
-                        response.raise_for_status()
-                        return await response.json()
-            except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def create_order(self, token: str, query: str, period_id: int, trade: bool, retries=5):
-        url = f'{self.API}/order'
-        data = json.dumps({'coinId':1, 'periodId':period_id, 'short':trade})
-        headers = {
-            **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': str(len(data)),
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
-        }
-        for attempt in range(retries):
-            try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.post(url=url, headers=headers, data=data) as response:
                         if response.status == 400:
                             return None
-                        
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def claim_order(self, token: str, query: str, order_id: int, type: str, retries=5):
-        url = f'{self.API}/order/{order_id}/{type}'
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def welcome_bonus(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/bonus/welcomeBonus"
         headers = {
             **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': '0',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": "0",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
         }
+        await asyncio.sleep(3)
         for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
-                    async with session.put(url=url, headers=headers) as response:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.post(url=url, headers=headers) as response:
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def quest_lists(self, token: str, query: str, retries=5):
-        url = f'{self.API}/quest'
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def daily_bonus(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/bonus/dailyBonus"
         headers = {
             **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": "0",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
         }
+        await asyncio.sleep(3)
         for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.post(url=url, headers=headers) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def user_reflink(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/refLink"
+        headers = {
+            **self.headers,
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
+        }
+        await asyncio.sleep(3)
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
                     async with session.get(url=url, headers=headers) as response:
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
-                
-    async def verify_quests(self, token: str, query: str, sub_quest_id: int, retries=5):
-        url = f'{self.API}/quest/{sub_quest_id}/verify'
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def claim_reflink(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/refLink/claim"
         headers = {
             **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': '0',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": "0",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
         }
+        await asyncio.sleep(3)
         for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.post(url=url, headers=headers) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return None
+                
+    async def user_order(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/order"
+        headers = {
+            **self.headers,
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
+        }
+        await asyncio.sleep(3)
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.get(url=url, headers=headers) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def create_order(self, user_id: int, period_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/order"
+        data = json.dumps({"coinId":1, "periodId":period_id, "short":False})
+        headers = {
+            **self.headers,
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": str(len(data)),
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
+        }
+        await asyncio.sleep(3)
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.post(url=url, headers=headers, data=data) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return None
+                
+    async def check_order(self, user_id: int, order_id: int, type: str, proxy=None, retries=5):
+        url = f"{self.BASE_API}/order/{str(order_id)}/{type}"
+        headers = {
+            **self.headers,
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": "0",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
+        }
+        await asyncio.sleep(3)
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
                     async with session.put(url=url, headers=headers) as response:
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
+                    await asyncio.sleep(5)
+                    continue
+                return None
                 
-    async def claim_quests(self, token: str, query: str, sub_quest_id: int, retries=5):
-        url = f'{self.API}/quest/{sub_quest_id}/claim'
+    async def task_lists(self, user_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/quest"
         headers = {
             **self.headers,
-            'Authorization': f'Bearer {token}',
-            'Content-Length': '0',
-            'Content-Type': 'application/json',
-            'X-Tg-Data': query
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
         }
+        await asyncio.sleep(3)
         for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(timeout=ClientTimeout(total=20)) as session:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.get(url=url, headers=headers) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return None
+                
+    async def verify_task(self, user_id: int, task_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/quest/{str(task_id)}/verify"
+        headers = {
+            **self.headers,
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": "0",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
+        }
+        await asyncio.sleep(3)
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
                     async with session.put(url=url, headers=headers) as response:
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
-                    print(
-                        f"{Fore.RED + Style.BRIGHT}ERROR.{Style.RESET_ALL}"
-                        f"{Fore.YELLOW + Style.BRIGHT} Retrying.... {Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT}[{attempt+1}/{retries}]{Style.RESET_ALL}",
-                        end="\r",
-                        flush=True
-                    )
-                    await asyncio.sleep(3)
-                else:
-                    return None
+                    await asyncio.sleep(5)
+                    continue
+                return None
                 
-    async def process_query(self, query: str):
-        token = await self.auth_login(query)
+    async def claim_task(self, user_id: int, task_id: int, proxy=None, retries=5):
+        url = f"{self.BASE_API}/quest/{str(task_id)}/claim"
+        headers = {
+            **self.headers,
+            "Authorization": f"Bearer {self.access_tokens[user_id]}",
+            "Content-Length": "0",
+            "Content-Type": "application/json",
+            "X-Tg-Data": self.query_ids[user_id]
+        }
+        await asyncio.sleep(3)
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.put(url=url, headers=headers) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return None
+            
+    async def process_auth_login(self, user_id: int, use_proxy: bool, rotate_proxy: bool):
+        print(
+            f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%x %X %Z')} ]{Style.RESET_ALL}"
+            f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+            f"{Fore.YELLOW + Style.BRIGHT}Retrieving Token...{Style.RESET_ALL}",
+            end="\r",
+            flush=True
+        )
+
+        proxy = self.get_next_proxy_for_account(user_id) if use_proxy else None
+        if rotate_proxy:
+            token = None
+            while token is None:
+                token = await self.auth_login(user_id, proxy)
+                if not token:
+                    self.log(
+                        f"{Fore.CYAN+Style.BRIGHT}Status    :{Style.RESET_ALL}"
+                        f"{Fore.RED+Style.BRIGHT} Retrieving Token Failed {Style.RESET_ALL}"
+                        f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                        f"{Fore.YELLOW+Style.BRIGHT} Rotating Proxy... {Style.RESET_ALL}"
+                    )
+                    proxy = self.rotate_proxy_for_account(user_id) if use_proxy else None
+                    await asyncio.sleep(5)
+                    continue
+
+                self.access_tokens[user_id] = token["access"]["token"]
+
+                self.log(
+                    f"{Fore.CYAN+Style.BRIGHT}Status    :{Style.RESET_ALL}"
+                    f"{Fore.GREEN+Style.BRIGHT} Retrieving Token Success {Style.RESET_ALL}"
+                )
+                return True
+
+        token = await self.auth_login(user_id, proxy)
         if not token:
             self.log(
-                f"{Fore.MAGENTA + Style.BRIGHT}[ Account{Style.RESET_ALL}"
-                f"{Fore.RED + Style.BRIGHT} Query ID Isn't Valid {Style.RESET_ALL}"
-                f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
+                f"{Fore.CYAN+Style.BRIGHT}Status    :{Style.RESET_ALL}"
+                f"{Fore.RED+Style.BRIGHT} Retrieving Token Failed {Style.RESET_ALL}"
+                f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                f"{Fore.YELLOW+Style.BRIGHT} Skipping This Account {Style.RESET_ALL}"
             )
-            return
+            return False
         
-        if token:
-            user = await self.user_data(token, query)
-            if not user:
-                self.log(
-                    f"{Fore.MAGENTA + Style.BRIGHT}[ Account{Style.RESET_ALL}"
-                    f"{Fore.RED + Style.BRIGHT} Data Is None {Style.RESET_ALL}"
-                    f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                )
-                return
-            
+        self.access_tokens[user_id] = token["access"]["token"]
+        
+        self.log(
+            f"{Fore.CYAN+Style.BRIGHT}Status    :{Style.RESET_ALL}"
+            f"{Fore.GREEN+Style.BRIGHT} Retrieving Token Success {Style.RESET_ALL}"
+        )
+        return True
+        
+    async def process_accounts(self, user_id: int, username: str, use_proxy: bool, rotate_proxy: bool):
+        self.log(
+            f"{Fore.CYAN+Style.BRIGHT}Username  :{Style.RESET_ALL}"
+            f"{Fore.WHITE+Style.BRIGHT} {username} {Style.RESET_ALL}"
+        )
+
+        is_logined = await self.process_auth_login(user_id, use_proxy, rotate_proxy)
+        if is_logined:
+            proxy = self.get_next_proxy_for_account(user_id) if use_proxy else None
+
+            await self.apply_reflink(user_id, proxy)
+
+            balance = "N/A"
+            user = await self.user_current(user_id, proxy)
             if user:
+                balance = user.get("balance", 0)
+                bonus = user.get("welcomeBonusReceived", False)
+
+                if not bonus:
+                    await self.welcome_bonus(user_id, proxy)
+
+            self.log(
+                f"{Fore.CYAN+Style.BRIGHT}Balance   :{Style.RESET_ALL}"
+                f"{Fore.WHITE+Style.BRIGHT} {balance} DPS {Style.RESET_ALL}"
+            )
+
+            checkin = await self.daily_bonus(user_id, proxy)
+            if checkin:
+                is_claimed = checkin.get("result", False)
+
+                if is_claimed:
+                    reward = checkin.get("bonus", 0)
+                    streak = checkin.get("streak", 0)
+                    self.log(
+                        f"{Fore.CYAN+Style.BRIGHT}Check-In  :{Style.RESET_ALL}"
+                        f"{Fore.WHITE+Style.BRIGHT} Day {streak} {Style.RESET_ALL}"
+                        f"{Fore.GREEN+Style.BRIGHT}Claimed Successfully{Style.RESET_ALL}"
+                        f"{Fore.MAGENTA+Style.BRIGHT} - {Style.RESET_ALL}"
+                        f"{Fore.CYAN+Style.BRIGHT}Reward:{Style.RESET_ALL}"
+                        f"{Fore.WHITE+Style.BRIGHT} {reward} DPS {Style.RESET_ALL}"
+                    )
+                else:
+                    self.log(
+                        f"{Fore.CYAN+Style.BRIGHT}Check-In  :{Style.RESET_ALL}"
+                        f"{Fore.YELLOW+Style.BRIGHT} Already Claimed {Style.RESET_ALL}"
+                    )
+            else:
                 self.log(
-                    f"{Fore.MAGENTA + Style.BRIGHT}[ Account{Style.RESET_ALL}"
-                    f"{Fore.WHITE + Style.BRIGHT} {user['tgUsername']} {Style.RESET_ALL}"
-                    f"{Fore.MAGENTA + Style.BRIGHT}] [ Balance{Style.RESET_ALL}"
-                    f"{Fore.WHITE + Style.BRIGHT} {user['balance']} $DPS {Style.RESET_ALL}"
-                    f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
+                    f"{Fore.CYAN+Style.BRIGHT}Check-In  :{Style.RESET_ALL}"
+                    f"{Fore.RED+Style.BRIGHT} Not Claimed {Style.RESET_ALL}"
                 )
-                await asyncio.sleep(1)
 
-                used_reff = user['usedRefLinkCode']
-                if used_reff is None:
-                    await self.apply_reff(token, query)
-                    await asyncio.sleep(1)
+            reflink = await self.user_reflink(user_id, proxy)
+            if reflink:
+                available_reward = reflink.get("availableToClaim", 0)
 
-                welcome_bonus = user['welcomeBonusReceived']
-                if not welcome_bonus:
-                    receive = await self.welcome_bonus(token, query)
-                    if receive:
-                        claimed = receive['result']
-                        if claimed:
-                            self.log(
-                                f"{Fore.MAGENTA + Style.BRIGHT}[ Welcome Bonus{Style.RESET_ALL}"
-                                f"{Fore.GREEN + Style.BRIGHT} Is Received {Style.RESET_ALL}"
-                                f"{Fore.MAGENTA + Style.BRIGHT}] [ Reward{Style.RESET_ALL}"
-                                f"{Fore.WHITE + Style.BRIGHT} {receive['bonus']} $DPS {Style.RESET_ALL}"
-                                f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                            )
-                        else:
-                            self.log(
-                                f"{Fore.MAGENTA + Style.BRIGHT}[ Welcome Bonus{Style.RESET_ALL}"
-                                f"{Fore.RED + Style.BRIGHT} Isn't Received {Style.RESET_ALL}"
-                                f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                            )
-                    else:
+                if available_reward > 0:
+                    claim = await self.claim_reflink(user_id, proxy)
+                    if claim:
                         self.log(
-                            f"{Fore.MAGENTA + Style.BRIGHT}[ Welcome Bonus{Style.RESET_ALL}"
-                            f"{Fore.RED + Style.BRIGHT} Data Is None {Style.RESET_ALL}"
-                            f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                        )
-                    await asyncio.sleep(1)
-
-                daily_bonus = await self.daily_bonus(token, query)
-                if daily_bonus:
-                    claimed = daily_bonus['result']
-                    if claimed:
-                        self.log(
-                            f"{Fore.MAGENTA + Style.BRIGHT}[ Daily Bonus{Style.RESET_ALL}"
-                            f"{Fore.GREEN + Style.BRIGHT} Is Claimed {Style.RESET_ALL}"
-                            f"{Fore.MAGENTA + Style.BRIGHT}] [ Reward{Style.RESET_ALL}"
-                            f"{Fore.WHITE + Style.BRIGHT} {daily_bonus['bonus']} $DPS {Style.RESET_ALL}"
-                            f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
+                            f"{Fore.CYAN+Style.BRIGHT}Refferal  :{Style.RESET_ALL}"
+                            f"{Fore.GREEN+Style.BRIGHT} Claimed Successfully {Style.RESET_ALL}"
+                            f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                            f"{Fore.CYAN+Style.BRIGHT} Reward: {Style.RESET_ALL}"
+                            f"{Fore.WHITE+Style.BRIGHT}{available_reward} DPS{Style.RESET_ALL}"
                         )
                     else:
                         self.log(
-                            f"{Fore.MAGENTA + Style.BRIGHT}[ Daily Bonus{Style.RESET_ALL}"
-                            f"{Fore.YELLOW + Style.BRIGHT} Is Already Claimed {Style.RESET_ALL}"
-                            f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
+                            f"{Fore.CYAN+Style.BRIGHT}Refferal  :{Style.RESET_ALL}"
+                            f"{Fore.RED+Style.BRIGHT} Not Claimed {Style.RESET_ALL}"
                         )
                 else:
                     self.log(
-                        f"{Fore.MAGENTA + Style.BRIGHT}[ Daily Bonus{Style.RESET_ALL}"
-                        f"{Fore.RED + Style.BRIGHT} Data Is None {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
+                        f"{Fore.CYAN+Style.BRIGHT}Refferal  :{Style.RESET_ALL}"
+                        f"{Fore.YELLOW+Style.BRIGHT} No Available Reward {Style.RESET_ALL}"
                     )
-                await asyncio.sleep(1)
+            else:
+                self.log(
+                    f"{Fore.CYAN+Style.BRIGHT}Refferal  :{Style.RESET_ALL}"
+                    f"{Fore.RED+Style.BRIGHT} GET Data Failed {Style.RESET_ALL}"
+                )
 
-                reff = await self.reff_link(token, query)
-                if reff:
-                    available = reff['availableToClaim']
-                    if available > 0:
-                        claim = await self.claim_reff(token, query)
-                        if claim:
-                            self.log(
-                                f"{Fore.MAGENTA + Style.BRIGHT}[ Friends{Style.RESET_ALL}"
-                                f"{Fore.GREEN + Style.BRIGHT} Is Claimed {Style.RESET_ALL}"
-                                f"{Fore.MAGENTA + Style.BRIGHT}] [ Reward{Style.RESET_ALL}"
-                                f"{Fore.WHITE + Style.BRIGHT} {available} $DPS {Style.RESET_ALL}"
-                                f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                            )
-                        else:
-                            self.log(
-                                f"{Fore.MAGENTA + Style.BRIGHT}[ Friends{Style.RESET_ALL}"
-                                f"{Fore.RED + Style.BRIGHT} Isn't Claimed {Style.RESET_ALL}"
-                                f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                            )
-                    else:
-                        self.log(
-                            f"{Fore.MAGENTA + Style.BRIGHT}[ Friends{Style.RESET_ALL}"
-                            f"{Fore.YELLOW + Style.BRIGHT} No Available $DPS to Claim {Style.RESET_ALL}"
-                            f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                        )
-                else:
+            order = await self.user_order(user_id, proxy)
+            if order:
+                self.log(f"{Fore.CYAN+Style.BRIGHT}Your Order:{Style.RESET_ALL}")
+
+                total_order = order.get("results", {}).get("orders", 0)
+                total_win = order.get("results", {}).get("wins", 0)
+                winrate = order.get("results", {}).get("winRate", 0)
+                winstreak = order.get("results", {}).get("streak", {}).get("count", 0)
+                self.log(
+                    f"{Fore.MAGENTA+Style.BRIGHT}  ● {Style.RESET_ALL}"
+                    f"{Fore.BLUE+Style.BRIGHT}Total  :{Style.RESET_ALL}"
+                    f"{Fore.WHITE+Style.BRIGHT} {total_order} {Style.RESET_ALL}"
+                )
+                self.log(
+                    f"{Fore.MAGENTA+Style.BRIGHT}  ● {Style.RESET_ALL}"
+                    f"{Fore.BLUE+Style.BRIGHT}Win    :{Style.RESET_ALL}"
+                    f"{Fore.WHITE+Style.BRIGHT} {total_win}x {Style.RESET_ALL}"
+                )
+                self.log(
+                    f"{Fore.MAGENTA+Style.BRIGHT}  ● {Style.RESET_ALL}"
+                    f"{Fore.BLUE+Style.BRIGHT}Winrate:{Style.RESET_ALL}"
+                    f"{Fore.WHITE+Style.BRIGHT} {winrate}% {Style.RESET_ALL}"
+                )
+                self.log(
+                    f"{Fore.MAGENTA+Style.BRIGHT}  ● {Style.RESET_ALL}"
+                    f"{Fore.BLUE+Style.BRIGHT}Streak :{Style.RESET_ALL}"
+                    f"{Fore.WHITE+Style.BRIGHT} {winstreak}x {Style.RESET_ALL}"
+                )
+
+                periodes = order.get("periods", [])
+                if periodes:
                     self.log(
-                        f"{Fore.MAGENTA + Style.BRIGHT}[ Friends{Style.RESET_ALL}"
-                        f"{Fore.RED + Style.BRIGHT} Data Is None {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
+                        f"{Fore.MAGENTA+Style.BRIGHT}  ● {Style.RESET_ALL}"
+                        f"{Fore.BLUE+Style.BRIGHT}Order Lists{Style.RESET_ALL}"
                     )
-                await asyncio.sleep(1)
 
-                my_order = await self.my_order(token, query)
-                if my_order:
-                    result = my_order['results']
-                    self.log(
-                        f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT} Total {result['orders']} {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT} Win {result['wins']}x {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT} Win Rate {result['winRate']}% {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                        f"{Fore.WHITE + Style.BRIGHT} Win Streak {result['streak']['count']}x {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                    )
-                    await asyncio.sleep(1)
-
-                    order_periodes = my_order['periods']
-                    for period in order_periodes:
-                        period_id = period['period']['id']
-                        order_data = period.get('order', None)
-
-                        if period and order_data is None:
-                            self.log(
-                                f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                f"{Fore.GREEN + Style.BRIGHT}Is Prepared{Style.RESET_ALL}"
-                                f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                    for idx, period in enumerate(periodes):
+                        if period:
+                            display_order = (
+                                "1H - Order" if idx == 0 else
+                                "4H - Order" if idx == 1 else
+                                "24H - Order"
                             )
-                            await asyncio.sleep(1)
 
-                            btc_stats = await self.btc_stats(token, query)
-                            if btc_stats:
-                                one_hours_stats = btc_stats['coin']['change']['1H']
-                                stats_color = Fore.RED if one_hours_stats < 0 else Fore.GREEN
-                                stats = f"{one_hours_stats:.2f}"  if one_hours_stats < 0 else f"+{one_hours_stats:.2f}"
-                                trade = True if one_hours_stats < 0 else False
-                                trade_type = 'Short' if trade else 'Long'
-
+                            period_id = period.get("period", {}).get("id")
+                            order_data = period.get("order")
+                            if order_data:
                                 self.log(
-                                    f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                    f"{Fore.WHITE + Style.BRIGHT} BTC {Style.RESET_ALL}"
-                                    f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                    f"{Fore.WHITE + Style.BRIGHT} 1H Stats is {Style.RESET_ALL}"
-                                    f"{stats_color + Style.BRIGHT}{stats}%{Style.RESET_ALL}"
-                                    f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                                    f"{Fore.MAGENTA+Style.BRIGHT}    # {Style.RESET_ALL}"
+                                    f"{Fore.WHITE+Style.BRIGHT}{display_order}{Style.RESET_ALL}"
+                                    f"{Fore.GREEN+Style.BRIGHT} [FILLED] {Style.RESET_ALL}"
                                 )
-                                await asyncio.sleep(1)
 
-                                create = await self.create_order(token, query, period_id, trade)
-                                if create:
-                                    self.log(
-                                        f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {trade_type} BTC {Style.RESET_ALL}"
-                                        f"{Fore.GREEN + Style.BRIGHT}Is Created{Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
-                                    )
-                                else:
-                                    self.log(
-                                        f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {trade_type} BTC {Style.RESET_ALL}"
-                                        f"{Fore.YELLOW + Style.BRIGHT}Not Eligible to Create{Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
-                                    )
+                                order_id = order_data.get("id")
+                                order_status = order_data.get("status")
 
-                            else:
-                                self.log(
-                                    f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                    f"{Fore.RED + Style.BRIGHT} Failed to Get 1H BTC Stats {Style.RESET_ALL}"
-                                    f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                                )
-                            await asyncio.sleep(1)
-
-                        else:
-                            order_id = str(order_data['id'])
-                            status = order_data['status']
-                            if status in ['CLAIM_AVAILABLE', 'NOT_WIN']:
-                                type = 'claim' if status == 'CLAIM_AVAILABLE' else 'markUserChecked'
-                                reward = order_data['reward'] if status == 'CLAIM_AVAILABLE' else 0
-                                claim = await self.claim_order(token, query, order_id, type)
-                                if claim:
-                                    self.log(
-                                        f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} ID {order_id} BTC {Style.RESET_ALL}"
-                                        f"{Fore.GREEN + Style.BRIGHT}Is Claimed{Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT} ] [ Reward{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {reward} $DPS {Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                                    )
-                                    await asyncio.sleep(1)
+                                if order_status == "CLAIM_AVAILABLE":
+                                    order_reward = order_data.get("reward", 0)
 
                                     self.log(
-                                        f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                        f"{Fore.GREEN + Style.BRIGHT}Is Prepared{Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                                        f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT}Check Status :{Style.RESET_ALL}"
+                                        f"{Fore.GREEN+Style.BRIGHT} WIN {Style.RESET_ALL}"
                                     )
-                                    await asyncio.sleep(1)
 
-                                    btc_stats = await self.btc_stats(token, query)
-                                    if btc_stats:
-                                        one_hours_stats = btc_stats['coin']['change']['1H']
-                                        stats_color = Fore.RED if one_hours_stats < 0 else Fore.GREEN
-                                        stats = f"{one_hours_stats:.2f}"  if one_hours_stats < 0 else f"+{one_hours_stats:.2f}"
-                                        trade = True if one_hours_stats < 0 else False
-                                        trade_type = 'Short' if trade else 'Long'
-
+                                    claim = await self.check_order(user_id, order_id, "claim")
+                                    if claim:
                                         self.log(
-                                            f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                            f"{Fore.WHITE + Style.BRIGHT} BTC {Style.RESET_ALL}"
-                                            f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                            f"{Fore.WHITE + Style.BRIGHT} 1H Stats is {Style.RESET_ALL}"
-                                            f"{stats_color + Style.BRIGHT}{stats}%{Style.RESET_ALL}"
-                                            f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                                            f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                            f"{Fore.CYAN+Style.BRIGHT}Claim Status :{Style.RESET_ALL}"
+                                            f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
+                                            f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                            f"{Fore.CYAN+Style.BRIGHT} Reward: {Style.RESET_ALL}"
+                                            f"{Fore.WHITE+Style.BRIGHT}{order_reward} DPS{Style.RESET_ALL}"
                                         )
-                                        await asyncio.sleep(1)
 
-                                        create = await self.create_order(token, query, period_id, trade)
+                                        create = await self.create_order(user_id, period_id, proxy)
                                         if create:
                                             self.log(
-                                                f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {trade_type} BTC {Style.RESET_ALL}"
-                                                f"{Fore.GREEN + Style.BRIGHT}Is Created{Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Create Status:{Style.RESET_ALL}"
+                                                f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT} Coin Type: {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}BTC{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT} - {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}Long{Style.RESET_ALL}"
                                             )
                                         else:
                                             self.log(
-                                                f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {trade_type} BTC {Style.RESET_ALL}"
-                                                f"{Fore.YELLOW + Style.BRIGHT}Not Eligible to Create{Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Create Status:{Style.RESET_ALL}"
+                                                f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT} Coin Type: {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}BTC{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT} - {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}Long{Style.RESET_ALL}"
+                                            )
+                                    else:
+                                        self.log(
+                                            f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                            f"{Fore.CYAN+Style.BRIGHT}Claim Status :{Style.RESET_ALL}"
+                                            f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
+                                        )
+                                
+                                elif order_status == "NOT_WIN":
+                                    self.log(
+                                        f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT}Check Status :{Style.RESET_ALL}"
+                                        f"{Fore.RED+Style.BRIGHT} Lose {Style.RESET_ALL}"
+                                    )
+
+                                    mark = await self.check_order(user_id, order_id, "markUserChecked")
+                                    if mark:
+                                        self.log(
+                                            f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                            f"{Fore.CYAN+Style.BRIGHT}Mark Status  :{Style.RESET_ALL}"
+                                            f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
+                                            f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                            f"{Fore.CYAN+Style.BRIGHT} Reward: {Style.RESET_ALL}"
+                                            f"{Fore.WHITE+Style.BRIGHT}{order_reward} DPS{Style.RESET_ALL}"
+                                        )
+
+                                        create = await self.create_order(user_id, period_id, proxy)
+                                        if create:
+                                            self.log(
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Create Status:{Style.RESET_ALL}"
+                                                f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT} Coin Type: {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}BTC{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT} - {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}Long{Style.RESET_ALL}"
+                                            )
+                                        else:
+                                            self.log(
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Create Status:{Style.RESET_ALL}"
+                                                f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT} Coin Type: {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}BTC{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT} - {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}Long{Style.RESET_ALL}"
+                                            )
+                                    else:
+                                        self.log(
+                                            f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                            f"{Fore.CYAN+Style.BRIGHT}Mark Status  :{Style.RESET_ALL}"
+                                            f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
+                                        )
+
+                                else:
+                                    seconds_to_finish = order_data.get("secondsToFinish")
+                                    check_time_wib = datetime.fromtimestamp(int(time.time()) + seconds_to_finish).astimezone(wib).strftime('%x %X %Z')
+                                    self.log(
+                                        f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT}Check Status :{Style.RESET_ALL}"
+                                        f"{Fore.YELLOW+Style.BRIGHT} Not Time to Check {Style.RESET_ALL}"
+                                        f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT} Check at: {Style.RESET_ALL}"
+                                        f"{Fore.WHITE+Style.BRIGHT}{check_time_wib}{Style.RESET_ALL}"
+                                    )
+
+                            else:
+                                self.log(
+                                    f"{Fore.MAGENTA+Style.BRIGHT}    # {Style.RESET_ALL}"
+                                    f"{Fore.WHITE+Style.BRIGHT}{display_order}{Style.RESET_ALL}"
+                                    f"{Fore.YELLOW+Style.BRIGHT} [EMPTY] {Style.RESET_ALL}"
+                                )
+
+                                create = await self.create_order(user_id, period_id, proxy)
+                                if create:
+                                    self.log(
+                                        f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT}Create Status:{Style.RESET_ALL}"
+                                        f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
+                                        f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT} Coin Type: {Style.RESET_ALL}"
+                                        f"{Fore.WHITE+Style.BRIGHT}BTC{Style.RESET_ALL}"
+                                        f"{Fore.MAGENTA+Style.BRIGHT} - {Style.RESET_ALL}"
+                                        f"{Fore.WHITE+Style.BRIGHT}Long{Style.RESET_ALL}"
+                                    )
+                                else:
+                                    self.log(
+                                        f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT}Create Status:{Style.RESET_ALL}"
+                                        f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
+                                        f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                        f"{Fore.CYAN+Style.BRIGHT} Coin Type: {Style.RESET_ALL}"
+                                        f"{Fore.WHITE+Style.BRIGHT}BTC{Style.RESET_ALL}"
+                                        f"{Fore.MAGENTA+Style.BRIGHT} - {Style.RESET_ALL}"
+                                        f"{Fore.WHITE+Style.BRIGHT}Long{Style.RESET_ALL}"
+                                    )
+                
+            else:
+                self.log(
+                    f"{Fore.CYAN+Style.BRIGHT}Your Order:{Style.RESET_ALL}"
+                    f"{Fore.RED+Style.BRIGHT} GET Data Failed {Style.RESET_ALL}"
+                ) 
+
+            task_lists = await self.task_lists(user_id, proxy)
+            if task_lists:
+                self.log(f"{Fore.CYAN+Style.BRIGHT}Task Lists:{Style.RESET_ALL}")
+
+                for tasks in task_lists:
+                    if tasks:
+                        group_name = tasks.get("name")
+                        group_tasks = tasks.get("quests", [])
+
+                        if group_tasks:
+                            self.log(
+                                f"{Fore.MAGENTA+Style.BRIGHT}  ● {Style.RESET_ALL}"
+                                f"{Fore.GREEN+Style.BRIGHT}{group_name}{Style.RESET_ALL}"
+                            )
+
+                            for task in group_tasks:
+                                if task:
+                                    task_id = task.get("id")
+                                    title = task.get("name")
+                                    reward = task.get("reward")
+                                    status = task.get("status")
+                                    allow_to_claim = task.get("claimAllowed")
+
+                                    if status == "COMPLETED":
+                                        self.log(
+                                            f"{Fore.MAGENTA+Style.BRIGHT}    > {Style.RESET_ALL}"
+                                            f"{Fore.WHITE+Style.BRIGHT}{title}{Style.RESET_ALL}"
+                                            f"{Fore.GREEN+Style.BRIGHT} [Completed] {Style.RESET_ALL}"
+                                        )
+                                        continue
+
+                                    if allow_to_claim:
+                                        self.log(
+                                            f"{Fore.MAGENTA+Style.BRIGHT}    > {Style.RESET_ALL}"
+                                            f"{Fore.WHITE+Style.BRIGHT}{title}{Style.RESET_ALL}"
+                                            f"{Fore.BLUE+Style.BRIGHT} [CLAIMABLE] {Style.RESET_ALL}"
+                                        )
+
+                                        claim = await self.claim_task(user_id, task_id, proxy)
+                                        if claim and claim.get("status") == "Ok":
+                                            self.log(
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Claim Status :{Style.RESET_ALL}"
+                                                f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT} Reward: {Style.RESET_ALL}"
+                                                f"{Fore.WHITE+Style.BRIGHT}{reward} DPS{Style.RESET_ALL}"
+                                            )
+                                        else:
+                                            self.log(
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Claim Status :{Style.RESET_ALL}"
+                                                f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
                                             )
 
                                     else:
                                         self.log(
-                                            f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                            f"{Fore.RED + Style.BRIGHT} Failed to Get 1H BTC Stats {Style.RESET_ALL}"
-                                            f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
+                                            f"{Fore.MAGENTA+Style.BRIGHT}    > {Style.RESET_ALL}"
+                                            f"{Fore.WHITE+Style.BRIGHT}{title}{Style.RESET_ALL}"
+                                            f"{Fore.BLUE+Style.BRIGHT} [NEW] {Style.RESET_ALL}"
                                         )
-                                    await asyncio.sleep(1)
 
-                                else:
-                                    self.log(
-                                        f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} ID {order_id} BTC {Style.RESET_ALL}"
-                                        f"{Fore.RED + Style.BRIGHT}Isn't Claimed{Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
-                                    )
-                                await asyncio.sleep(1)
-
-                            else:
-                                now = int(datetime.now(pytz.utc).timestamp())
-                                finish_time_utc = datetime.fromtimestamp(now + order_data['secondsToFinish'], pytz.utc)
-                                finish_time_wib = finish_time_utc.astimezone(wib).strftime('%x %X %Z')
-                                self.log(
-                                    f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                                    f"{Fore.WHITE + Style.BRIGHT} {period_id} {Style.RESET_ALL}"
-                                    f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                    f"{Fore.WHITE + Style.BRIGHT} ID {order_id} BTC {Style.RESET_ALL}"
-                                    f"{Fore.YELLOW + Style.BRIGHT}Not Time to Claim{Style.RESET_ALL}"
-                                    f"{Fore.MAGENTA + Style.BRIGHT} ] [ Claim at{Style.RESET_ALL}"
-                                    f"{Fore.WHITE + Style.BRIGHT} {finish_time_wib} {Style.RESET_ALL}"
-                                    f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                                )
-                            await asyncio.sleep(1)
-
-                else:
-                    self.log(
-                        f"{Fore.MAGENTA + Style.BRIGHT}[ Orders{Style.RESET_ALL}"
-                        f"{Fore.RED + Style.BRIGHT} Data Is None {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                    )
-                await asyncio.sleep(1)
-
-                quests = await self.quest_lists(token, query)
-                if quests:
-                    completed = False
-                    for quest in quests:
-                        type = quest['name']
-                        sub_quests = quest['quests']
-
-                        if quest:
-                            sub_completed = False
-                            for sub_quest in sub_quests:
-                                sub_quest_id = str(sub_quest['id'])
-                                status = sub_quest['status']
-
-                                if sub_quest and status == 'NEW':
-                                    can_claim = sub_quest['claimAllowed']
-                                    if not can_claim:
-                                        verify = await self.verify_quests(token, query, sub_quest_id)
-                                        if verify and verify['status'] == 'OK':
+                                        verify = await self.verify_task(user_id, task_id, proxy)
+                                        if verify and verify.get("status") == "Ok":
                                             self.log(
-                                                f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {type} {Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {sub_quest['name']} {Style.RESET_ALL}"
-                                                f"{Fore.GREEN + Style.BRIGHT}Is Verified{Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Verify Status:{Style.RESET_ALL}"
+                                                f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
                                             )
+
+                                            claim = await self.claim_task(user_id, task_id, proxy)
+                                            if claim and claim.get("status") == "Ok":
+                                                self.log(
+                                                    f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                    f"{Fore.CYAN+Style.BRIGHT}Claim Status :{Style.RESET_ALL}"
+                                                    f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
+                                                    f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
+                                                    f"{Fore.CYAN+Style.BRIGHT} Reward: {Style.RESET_ALL}"
+                                                    f"{Fore.WHITE+Style.BRIGHT}{reward} DPS{Style.RESET_ALL}"
+                                                )
+                                            else:
+                                                self.log(
+                                                    f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                    f"{Fore.CYAN+Style.BRIGHT}Claim Status :{Style.RESET_ALL}"
+                                                    f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
+                                                )
                                         else:
                                             self.log(
-                                                f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {type} {Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {sub_quest['name']} {Style.RESET_ALL}"
-                                                f"{Fore.RED + Style.BRIGHT}Isn't Verified{Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
+                                                f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
+                                                f"{Fore.CYAN+Style.BRIGHT}Verify Status:{Style.RESET_ALL}"
+                                                f"{Fore.RED+Style.BRIGHT} Failed {Style.RESET_ALL}"
                                             )
-                                        await asyncio.sleep(1)
 
-                                    else:
-                                        claim = await self.claim_quests(token, query, sub_quest_id)
-                                        if claim and claim['status'] == 'OK':
-                                            self.log(
-                                                f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {type} {Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {sub_quest['name']} {Style.RESET_ALL}"
-                                                f"{Fore.GREEN + Style.BRIGHT}Is Claimed{Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT} ] [ Reward{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {sub_quest['reward']} $DPS {Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
-                                            )
-                                        else:
-                                            self.log(
-                                                f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {type} {Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                                f"{Fore.WHITE + Style.BRIGHT} {sub_quest['name']} {Style.RESET_ALL}"
-                                                f"{Fore.RED + Style.BRIGHT}Isn't Claimed{Style.RESET_ALL}"
-                                                f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
-                                            )
-                                        await asyncio.sleep(1)
-
-                                elif sub_quest and status == 'VERIFICATION':
-                                    self.log(
-                                        f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {type} {Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                        f"{Fore.WHITE + Style.BRIGHT} {sub_quest['name']} {Style.RESET_ALL}"
-                                        f"{Fore.YELLOW + Style.BRIGHT}In Verification{Style.RESET_ALL}"
-                                        f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
-                                    )
-
-                                else:
-                                    sub_completed = True
-
-                            if sub_completed:
-                                self.log(
-                                    f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                                    f"{Fore.WHITE + Style.BRIGHT} {type} {Style.RESET_ALL}"
-                                    f"{Fore.GREEN + Style.BRIGHT}Is Completed{Style.RESET_ALL}"
-                                    f"{Fore.MAGENTA + Style.BRIGHT} ]{Style.RESET_ALL}"
-                                )
                         else:
-                            completed = True
-
-                    if completed:
-                        self.log(
-                            f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                            f"{Fore.GREEN + Style.BRIGHT} Is Completed {Style.RESET_ALL}"
-                            f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                        )
-                else:
-                    self.log(
-                        f"{Fore.MAGENTA + Style.BRIGHT}[ Quest{Style.RESET_ALL}"
-                        f"{Fore.GREEN + Style.BRIGHT} Data Is None {Style.RESET_ALL}"
-                        f"{Fore.MAGENTA + Style.BRIGHT}]{Style.RESET_ALL}"
-                    )
-
+                            self.log(
+                                f"{Fore.MAGENTA+Style.BRIGHT}  ● {Style.RESET_ALL}"
+                                f"{Fore.GREEN+Style.BRIGHT}{group_name}{Style.RESET_ALL}"
+                                f"{Fore.YELLOW+Style.BRIGHT} No Available Tasks {Style.RESET_ALL}"
+                            )
+            else:
+                self.log(
+                    f"{Fore.CYAN+Style.BRIGHT}Task Lists:{Style.RESET_ALL}"
+                    f"{Fore.RED+Style.BRIGHT} GET Lists Data Failed {Style.RESET_ALL}"
+                )     
+        
     async def main(self):
         try:
             with open('query.txt', 'r') as file:
                 queries = [line.strip() for line in file if line.strip()]
+            
+            use_proxy_choice, rotate_proxy = self.print_question()
 
             while True:
+                use_proxy = False
+                if use_proxy_choice in [1, 2]:
+                    use_proxy = True
+
                 self.clear_terminal()
                 self.welcome()
                 self.log(
                     f"{Fore.GREEN + Style.BRIGHT}Account's Total: {Style.RESET_ALL}"
                     f"{Fore.WHITE + Style.BRIGHT}{len(queries)}{Style.RESET_ALL}"
                 )
-                self.log(f"{Fore.CYAN + Style.BRIGHT}-{Style.RESET_ALL}"*75)
 
-                for query in queries:
-                    query = query.strip()
-                    if query:
-                        await self.process_query(query)
-                        self.log(f"{Fore.CYAN + Style.BRIGHT}-{Style.RESET_ALL}"*75)
-                        await asyncio.sleep(3)
+                if use_proxy:
+                    await self.load_proxies(use_proxy_choice)
+                
+                separator = "=" * 25
+                for idx, query_id in enumerate(queries, start=1):
+                    if query_id:
+                        user_id, username = self.load_query_data(query_id)
 
-                seconds = 1800
+                        if user_id and username:
+                            self.query_ids[user_id] = query_id
+
+                            self.log(
+                                f"{Fore.CYAN + Style.BRIGHT}{separator}[{Style.RESET_ALL}"
+                                f"{Fore.WHITE + Style.BRIGHT} {idx} {Style.RESET_ALL}"
+                                f"{Fore.CYAN + Style.BRIGHT}Of{Style.RESET_ALL}"
+                                f"{Fore.WHITE + Style.BRIGHT} {len(queries)} {Style.RESET_ALL}"
+                                f"{Fore.CYAN + Style.BRIGHT}]{separator}{Style.RESET_ALL}"
+                            )
+                            await self.process_accounts(user_id, username, use_proxy, rotate_proxy)
+                            await asyncio.sleep(3)
+
+                self.log(f"{Fore.CYAN + Style.BRIGHT}={Style.RESET_ALL}"*60)
+                seconds = 1 * 60 * 60
                 while seconds > 0:
                     formatted_time = self.format_seconds(seconds)
                     print(
                         f"{Fore.CYAN+Style.BRIGHT}[ Wait for{Style.RESET_ALL}"
                         f"{Fore.WHITE+Style.BRIGHT} {formatted_time} {Style.RESET_ALL}"
-                        f"{Fore.CYAN+Style.BRIGHT}... ]{Style.RESET_ALL}",
+                        f"{Fore.CYAN+Style.BRIGHT}... ]{Style.RESET_ALL}"
+                        f"{Fore.WHITE+Style.BRIGHT} | {Style.RESET_ALL}"
+                        f"{Fore.BLUE+Style.BRIGHT}All Accounts Have Been Processed.{Style.RESET_ALL}",
                         end="\r"
                     )
                     await asyncio.sleep(1)
                     seconds -= 1
 
         except FileNotFoundError:
-            self.log(f"{Fore.RED}File 'query.txt' tidak ditemukan.{Style.RESET_ALL}")
+            self.log(f"{Fore.RED}File 'query.txt' Not Found.{Style.RESET_ALL}")
             return
         except Exception as e:
             self.log(f"{Fore.RED+Style.BRIGHT}Error: {e}{Style.RESET_ALL}")
+            raise e
 
 if __name__ == "__main__":
     try:
@@ -892,5 +976,5 @@ if __name__ == "__main__":
         print(
             f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%x %X %Z')} ]{Style.RESET_ALL}"
             f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
-            f"{Fore.RED + Style.BRIGHT}[ EXIT ] EtherDrops - BOT{Style.RESET_ALL}",                                       
+            f"{Fore.RED + Style.BRIGHT}[ EXIT ] EtherDrops - BOT{Style.RESET_ALL}                                       "                              
         )

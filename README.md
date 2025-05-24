@@ -1,25 +1,29 @@
-# EtherDrops BOT
-EtherDrops BOT
+# EtherDrops [FOMO App] BOT
+EtherDrops [FOMO App] BOT
 
-Register Here : [EtherDrops](https://t.me/drops/app?startapp=ref_XKFWG)
+Register Here : [EtherDrops [FOMO App]](https://t.me/drops/app?startapp=ref_XKFWG)
 
-## Fitur
+## Features
 
   - Auto Get Account Information
+  - Auto Run With [Monosans](https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/all.txt) Proxy - `Choose 1`
+  - Auto Run With Private Proxy - `Choose 2`
+  - Auto Run Without Proxy - `Choose 3`
+  - Auto Rotate Invalid Proxy - `y` or `n`
   - Auto Claim Welcome Bonus
   - Auto Claim Daily Check-In
-  - Auto Claim Refferal
-  - Auto Create & Close BTC Orders
-  - Auto Complete Task
-  - Multi Account
+  - Auto Claim Referral Reward 
+  - Auto Create & Close Order - Long BTC
+  - Auto Complete Tasks
+  - Multi Accounts
 
-## Prasyarat
+## Requiremnets
 
-Pastikan Anda telah menginstal Python3.9 dan PIP.
+- Make sure you have Python3.9 or higher installed and pip.
 
-## Instalasi
+## Instalation
 
-1. **Kloning repositori:**
+1. **Clone The Repositories:**
    ```bash
    git clone https://github.com/vonssy/EtherDrops-BOT.git
    ```
@@ -27,30 +31,40 @@ Pastikan Anda telah menginstal Python3.9 dan PIP.
    cd EtherDrops-BOT
    ```
 
-2. **Instal Requirements:**
+2. **Install Requirements:**
    ```bash
    pip install -r requirements.txt #or pip3 install -r requirements.txt
    ```
 
-## Konfigurasi
-
-- **Auth Data:** Pada **DevTools** pergi ke **Application** > **Session storage** > **Key __telegram__initParams** > `Copy Value` pada **tgWebAppData** `query_id=` atau `user=`
-- **query.txt:** Anda akan menemukan file `query.txt` di dalam direktori proyek. Pastikan `query.txt` berisi data yang sesuai dengan format yang diharapkan oleh skrip. Berikut adalah contoh format file:
+## Configuration
+- **query.txt:** You will find the file `query.txt` inside the project directory. Make sure `query.txt` contains data that matches the format expected by the script. Here are examples of file formats:
 
   ```bash
-  query_id=
-  user=
+    query_id=xxxxxx_1
+    user=xxxxxx_2
   ```
 
-## Jalankan
+- **proxy.txt:** You will find the file `proxy.txt` inside the project directory. Make sure `proxy.txt` contains data that matches the format expected by the script. Here are examples of file formats:
+  ```bash
+    ip:port # Default Protcol HTTP.
+    protocol://ip:port
+    protocol://user:pass@ip:port
+  ```
+
+## Run
 
 ```bash
 python bot.py #or python3 bot.py
 ```
 
-## Penutup
+## Buy Me a Coffee
 
-Terima kasih telah mengunjungi repository ini, jangan lupa untuk memberikan kontribusi berupa follow dan stars.
-Jika Anda memiliki pertanyaan, menemukan masalah, atau memiliki saran untuk perbaikan, jangan ragu untuk menghubungi saya atau membuka *issue* di repositori GitHub ini.
+- **EVM:** 0xe3c9ef9a39e9eb0582e5b147026cae524338521a
+- **TON:** UQBEFv58DC4FUrGqinBB5PAQS7TzXSm5c1Fn6nkiet8kmehB
+- **SOL:** E1xkaJYmAFEj28NPHKhjbf7GcvfdjKdvXju8d8AeSunf
+- **SUI:** 0xa03726ecbbe00b31df6a61d7a59d02a7eedc39fe269532ceab97852a04cf3347
+
+Thank you for visiting this repository, don't forget to contribute in the form of follows and stars.
+If you have questions, find an issue, or have suggestions for improvement, feel free to contact me or open an *issue* in this GitHub repository.
 
 **vonssy**
