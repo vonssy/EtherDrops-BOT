@@ -717,9 +717,6 @@ class EtherDrops:
                                             f"{Fore.MAGENTA+Style.BRIGHT}      ● {Style.RESET_ALL}"
                                             f"{Fore.CYAN+Style.BRIGHT}Mark Status  :{Style.RESET_ALL}"
                                             f"{Fore.GREEN+Style.BRIGHT} Success {Style.RESET_ALL}"
-                                            f"{Fore.MAGENTA+Style.BRIGHT}-{Style.RESET_ALL}"
-                                            f"{Fore.CYAN+Style.BRIGHT} Reward: {Style.RESET_ALL}"
-                                            f"{Fore.WHITE+Style.BRIGHT}{order_reward} DPS{Style.RESET_ALL}"
                                         )
 
                                         create = await self.create_order(user_id, period_id, proxy)
